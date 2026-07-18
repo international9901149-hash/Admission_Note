@@ -349,10 +349,10 @@
     <div class="result-section">
         <div class="box summary-box" id="box-summary">
             <div class="box-title" style="color: #1e40af;">
-                <span>Admission Summary <span class="edited-badge">已手動編輯</span></span>
+                <span>Acceptance note <span class="edited-badge">已手動編輯</span></span>
                 <div class="btn-group">
                     <button class="reset-btn" title="還原為自動產生內容" onclick="resetBox('summary')">↺ 還原</button>
-                    <button class="copy-btn btn-blue" onclick="copyText('out-summary')">Copy Summary</button>
+                    <button class="copy-btn btn-blue" onclick="copyText('out-summary')">Copy Note</button>
                 </div>
             </div>
             <div id="out-summary" class="content" contenteditable="true" oninput="markEdited('summary')">Please fill in details...</div>
@@ -360,13 +360,13 @@
 
         <div class="box plan-box" id="box-plan">
             <div class="box-title" style="color: #065f46;">
-                <span>Management Plan <span class="edited-badge">已手動編輯</span></span>
+                <span>Progress Note <span class="edited-badge">已手動編輯</span></span>
                 <div class="btn-group">
                     <button class="reset-btn" title="還原為自動產生內容" onclick="resetBox('plan')">↺ 還原</button>
-                    <button class="copy-btn btn-green" onclick="copyText('out-plan')">Copy Plan</button>
+                    <button class="copy-btn btn-green" onclick="copyText('out-plan')">Copy Progress Note</button>
                 </div>
             </div>
-            <div id="out-plan" class="content" contenteditable="true" oninput="markEdited('plan')">1. Monitoring vital signs...</div>
+            <div id="out-plan" class="content" contenteditable="true" oninput="markEdited('plan')">Generating progress note...</div>
         </div>
 
         <div class="box handover-box" id="box-handover">
@@ -386,7 +386,7 @@
                 AI Clinical Advisory Prompt
                 <button class="copy-btn btn-purple" id="advice-btn" onclick="getAIAdvice()">🩺 取得 AI 建議</button>
             </div>
-            <div class="hint-text">※ 點擊按鈕，AI 會根據上方目前的 Admission Summary 與 Management Plan，針對治療的有效性與安全性直接在此頁面提供評估，不需另外複製貼到其他平台。</div>
+            <div class="hint-text">※ 點擊按鈕，AI 會根據上方目前的 Acceptance note（已含治療計畫），針對治療的有效性與安全性直接在此頁面提供評估，不需另外複製貼到其他平台。</div>
             <div id="out-prompt" class="content" style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px;">點擊上方按鈕，取得 AI 臨床建議...</div>
             <div class="advice-disclaimer">⚠️ AI 建議僅供臨床參考，實際診斷與治療仍需醫師專業判斷。</div>
         </div>
@@ -424,6 +424,12 @@
         generate();
     }
 
+    function toNumberedList(text) {
+        const items = text.split(/[,，、;；\n]+/).map(s => s.trim()).filter(s => s.length > 0);
+        if (items.length === 0) return '1. ';
+        return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
+    }
+
     function generate() {
         const d = {
             age: document.getElementById('age').value || '[Age]',
@@ -441,8 +447,7 @@
 
         const pronoun = d.gender.toLowerCase() === 'female' ? 'she' : 'he';
 
-        const summary = `This ${d.age}-year-old ${d.gender}, with a past history of ${d.pmh}. This time, ${pronoun} presented with ${d.cc}, accompanied by ${d.assoc}. The patient denied any ${d.neg}. Physical exam showed ${d.pe}. Laboratory investigations revealed ${d.lab}. The chest X-ray revealed ${d.img}. Under the impression of ${d.dx}, the patient was admitted for further management and work-up. Current treatment includes ${d.tx}.`;
-        if (!edited.summary) document.getElementById('out-summary').innerText = summary;
+        const summary = `This ${d.age}-year-old ${d.gender}, with a past history of ${d.pmh}. This time, ${pronoun} presented with ${d.cc}, accompanied by ${d.assoc}. The patient denied any ${d.neg}. Physical exam showed ${d.pe}. Laboratory investigations revealed ${d.lab}. The chest X-ray revealed ${d.img}. Under the impression of ${d.dx}, the patient was admitted for further management and work-up.`;
 
         let plan = "";
         const dx_input = d.dx.toLowerCase();
@@ -454,7 +459,12 @@
         } else {
             plan = `${currentTx}2. Monitor vital signs and hemodynamic stability.\n3. Complete diagnostic work-up.\n4. Provide supportive care.\n5. Follow up on lab results and adjust treatment.`;
         }
-        if (!edited.plan) document.getElementById('out-plan').innerText = plan;
+
+        const acceptanceNote = `${summary}\n[Management plan]\n${plan}`;
+        if (!edited.summary) document.getElementById('out-summary').innerText = acceptanceNote;
+
+        const progressNote = `S: ${d.cc}\n\nO:\n[Physical exam]\nGeneral condition: Ill-looking appearance\nMentality: E4V5M6; Clear consciousness; intact orientation\nVital signs: PR:    RR:    BT:    SpO2:\nI/O:\nHEENT: No pale conjunctiva, no icteric sclera\nNeck: Supple neck; no palpable lymph node\nChest: Clear breath sound; no rales, no wheezing\nHeart: Regular heart beat\nAbdomen: No operation scar, normoactive bowel sound, no tenderness, no Murphy's sign, no McBurney's point tenderness; no rebounding pain\nBACK & SPINE: No CV angle knocking pain\nEXTREMITIES: No limitation of movement; no pitting edema; old scar\n\n[Lab data]\n${d.lab}\n\n[Image]\n${d.img}\n\nA:\n[Active problem]\n${toNumberedList(d.dx)}\n[Inactive problems]\n${toNumberedList(d.pmh)}\n\nP:\n${plan}`;
+        if (!edited.plan) document.getElementById('out-plan').innerText = progressNote;
 
         const handover = `[CC]\n${d.cc}\n\n[Active problems]\n1. ${d.dx}\n\n[Current Treatment]\n${d.tx}\n\n[Past history]\n${d.pmh}`;
         if (!edited.handover) document.getElementById('out-handover').innerText = handover;
@@ -563,15 +573,11 @@ WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP
     ═══════════════════════════════════════════════ */
 
     function buildAdvisoryPrompt() {
-        const summary = document.getElementById('out-summary').innerText;
-        const plan = document.getElementById('out-plan').innerText;
-        return `你是一位資深的胸腔內科與重症醫學專科醫師，請仔細審閱以下住院病例摘要與目前的治療計畫。
+        const note = document.getElementById('out-summary').innerText;
+        return `你是一位資深的胸腔內科與重症醫學專科醫師，請仔細審閱以下住院病例摘要（已含目前治療計畫）。
 
-【Admission Summary】
-${summary}
-
-【Management Plan】
-${plan}
+【Acceptance Note】
+${note}
 
 請針對「治療的有效性」與「安全性」提供具體評估，並依下列結構以正體中文回覆：
 
