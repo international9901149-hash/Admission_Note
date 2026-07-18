@@ -26,6 +26,11 @@
         function getFormData() {
             const data = {};
             fields.forEach(f => { data[f] = document.getElementById(f).value; });
+            // Persist manually-edited output boxes too, so reloading a record restores edits
+            data.summary = document.getElementById('out-summary').innerText;
+            data.plan = document.getElementById('out-plan').innerText;
+            data.handover = document.getElementById('out-handover').innerText;
+            data.editedFlags = JSON.stringify(edited);
             return data;
         }
 
@@ -33,11 +38,22 @@
             fields.forEach(f => {
                 document.getElementById(f).value = data[f] || '';
             });
+            // Restore edited-state so generate() doesn't clobber saved manual edits
+            if (data.editedFlags) {
+                try { edited = JSON.parse(data.editedFlags); } catch (e) { edited = { summary:false, plan:false, handover:false }; }
+            } else {
+                edited = { summary:false, plan:false, handover:false };
+            }
             generate();
+            if (edited.summary && data.summary) document.getElementById('out-summary').innerText = data.summary;
+            if (edited.plan && data.plan) document.getElementById('out-plan').innerText = data.plan;
+            if (edited.handover && data.handover) document.getElementById('out-handover').innerText = data.handover;
         }
 
         function clearForm() {
             fields.forEach(f => { document.getElementById(f).value = ''; });
+            edited = { summary:false, plan:false, handover:false };
+            document.getElementById('ocr-status').textContent = '';
             generate();
         }
 
@@ -147,6 +163,7 @@
         .result-section { display: flex; flex-direction: column; gap: 15px; margin-top: 20px; }
         .box { padding: 15px; border-radius: 6px; position: relative; }
         .box-title { font-weight: bold; margin-bottom: 8px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+        .box-title .btn-group { display: flex; gap: 6px; align-items: center; }
         .summary-box { background: #eff6ff; border: 1px solid #bfdbfe; }
         .plan-box { background: #ecfdf5; border: 1px solid #a7f3d0; }
         .handover-box { background: #fffbeb; border: 1px solid #fde68a; }
@@ -158,7 +175,34 @@
         .btn-green { background: #10b981; }
         .btn-amber { background: #d97706; }
         .btn-purple { background: #8b5cf6; font-weight: bold; }
+        .reset-btn { background: transparent; border: 1px solid #9ca3af; color: #6b7280; padding: 2px 7px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+        .reset-btn:hover { background: #e5e7eb; }
         .hint-text { font-size: 12px; color: #6d28d9; margin-bottom: 10px; font-style: italic; }
+        .edit-hint { font-size: 11px; color: #9ca3af; margin-top: 6px; }
+
+        /* 手動編輯狀態 */
+        [contenteditable="true"] { cursor: text; border-radius: 4px; padding: 2px 4px; margin: -2px -4px; border: 1px dashed transparent; }
+        [contenteditable="true"]:hover { border-color: #d1d5db; }
+        [contenteditable="true"]:focus { outline: none; border-color: #9ca3af; background: rgba(255,255,255,0.7); }
+        .edited-badge { font-size: 10px; background: #f59e0b; color: white; padding: 1px 6px; border-radius: 10px; display: none; }
+        .box.is-edited .edited-badge { display: inline-block; }
+
+        /* AI OCR 貼上區 */
+        .ocr-zone {
+            margin-top: 8px;
+            border: 1px dashed #93c5fd;
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+            font-size: 12.5px;
+            color: #2563eb;
+            background: #f0f7ff;
+            cursor: text;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .ocr-zone:focus { outline: none; border-color: #3b82f6; background: #e0edff; }
+        .ocr-zone .sub { font-size: 11px; color: #9ca3af; display: block; margin-top: 2px; }
+        .ocr-status { font-size: 12px; margin-top: 6px; min-height: 16px; }
 
         /* ── Firebase 儲存區 ── */
         .firebase-section {
@@ -284,7 +328,17 @@
         <tr><th>伴隨症狀 (Assoc.)</th><td><textarea id="assoc" placeholder="Associated symptoms..." oninput="generate()"></textarea></td></tr>
         <tr><th>否認症狀 (Neg.)</th><td><textarea id="neg" placeholder="Negative symptoms..." oninput="generate()"></textarea></td></tr>
         <tr><th>身體檢查 (PE)</th><td><textarea id="pe" placeholder="Physical exam..." oninput="generate()"></textarea></td></tr>
-        <tr><th>抽血報告 (Lab)</th><td><textarea id="lab" placeholder="Lab results..." oninput="generate()"></textarea></td></tr>
+        <tr>
+            <th>抽血報告 (Lab)</th>
+            <td>
+                <textarea id="lab" placeholder="Lab results..." oninput="generate()"></textarea>
+                <div class="ocr-zone" id="ocr-zone" tabindex="0">
+                    📋 點一下這裡，再按 Ctrl+V 貼上檢驗報告截圖
+                    <span class="sub">AI 會自動判讀並依格式填入上方欄位（含異常判斷）</span>
+                </div>
+                <div class="ocr-status" id="ocr-status"></div>
+            </td>
+        </tr>
         <tr><th>影像檢查 (Img)</th><td><textarea id="img" placeholder="CXR/CT findings..." oninput="generate()"></textarea></td></tr>
         <tr><th>診斷 (Diagnosis)</th><td><input type="text" id="dx" placeholder="Main diagnosis..." oninput="generate()"></td></tr>
         <tr><th>治療 (Treatment)</th><td><textarea id="tx" placeholder="Antibiotics, procedures, medications..." oninput="generate()"></textarea></td></tr>
@@ -292,29 +346,39 @@
     </div>
 
     <div class="result-section">
-        <div class="box summary-box">
+        <div class="box summary-box" id="box-summary">
             <div class="box-title" style="color: #1e40af;">
-                Admission Summary
-                <button class="copy-btn btn-blue" onclick="copyText('out-summary')">Copy Summary</button>
+                <span>Admission Summary <span class="edited-badge">已手動編輯</span></span>
+                <div class="btn-group">
+                    <button class="reset-btn" title="還原為自動產生內容" onclick="resetBox('summary')">↺ 還原</button>
+                    <button class="copy-btn btn-blue" onclick="copyText('out-summary')">Copy Summary</button>
+                </div>
             </div>
-            <div id="out-summary" class="content">Please fill in details...</div>
+            <div id="out-summary" class="content" contenteditable="true" oninput="markEdited('summary')">Please fill in details...</div>
         </div>
 
-        <div class="box plan-box">
+        <div class="box plan-box" id="box-plan">
             <div class="box-title" style="color: #065f46;">
-                Management Plan
-                <button class="copy-btn btn-green" onclick="copyText('out-plan')">Copy Plan</button>
+                <span>Management Plan <span class="edited-badge">已手動編輯</span></span>
+                <div class="btn-group">
+                    <button class="reset-btn" title="還原為自動產生內容" onclick="resetBox('plan')">↺ 還原</button>
+                    <button class="copy-btn btn-green" onclick="copyText('out-plan')">Copy Plan</button>
+                </div>
             </div>
-            <div id="out-plan" class="content">1. Monitoring vital signs...</div>
+            <div id="out-plan" class="content" contenteditable="true" oninput="markEdited('plan')">1. Monitoring vital signs...</div>
         </div>
 
-        <div class="box handover-box">
+        <div class="box handover-box" id="box-handover">
             <div class="box-title" style="color: #92400e;">
-                Sign-out (交班簡報)
-                <button class="copy-btn btn-amber" onclick="copyText('out-handover')">Copy Sign-out</button>
+                <span>Sign-out (交班簡報) <span class="edited-badge">已手動編輯</span></span>
+                <div class="btn-group">
+                    <button class="reset-btn" title="還原為自動產生內容" onclick="resetBox('handover')">↺ 還原</button>
+                    <button class="copy-btn btn-amber" onclick="copyText('out-handover')">Copy Sign-out</button>
+                </div>
             </div>
-            <div id="out-handover" class="content">Generating sign-out summary...</div>
+            <div id="out-handover" class="content" contenteditable="true" oninput="markEdited('handover')">Generating sign-out summary...</div>
         </div>
+        <div class="edit-hint">💡 三個框內文字皆可直接點擊編輯；修改後之後再更動上方欄位就不會被自動覆蓋，按「↺ 還原」可以回復自動產生內容。</div>
 
         <div class="box insight-box">
             <div class="box-title" style="color: #5b21b6;">
@@ -344,6 +408,20 @@
 </div>
 
 <script>
+    // 追蹤三個輸出框是否已被手動編輯過（避免自動產生覆蓋掉醫師的修改）
+    let edited = { summary: false, plan: false, handover: false };
+
+    function markEdited(key) {
+        edited[key] = true;
+        document.getElementById('box-' + key).classList.add('is-edited');
+    }
+
+    function resetBox(key) {
+        edited[key] = false;
+        document.getElementById('box-' + key).classList.remove('is-edited');
+        generate();
+    }
+
     function generate() {
         const d = {
             age: document.getElementById('age').value || '[Age]',
@@ -362,7 +440,7 @@
         const pronoun = d.gender.toLowerCase() === 'female' ? 'she' : 'he';
 
         const summary = `This ${d.age}-year-old ${d.gender}, with a past history of ${d.pmh}. This time, ${pronoun} presented with ${d.cc}, accompanied by ${d.assoc}. The patient denied any ${d.neg}. Physical exam showed ${d.pe}. Laboratory investigations revealed ${d.lab}. The chest X-ray revealed ${d.img}. Under the impression of ${d.dx}, the patient was admitted for further management and work-up. Current treatment includes ${d.tx}.`;
-        document.getElementById('out-summary').innerText = summary;
+        if (!edited.summary) document.getElementById('out-summary').innerText = summary;
 
         let plan = "";
         const dx_input = d.dx.toLowerCase();
@@ -374,11 +452,12 @@
         } else {
             plan = `${currentTx}2. Monitor vital signs and hemodynamic stability.\n3. Complete diagnostic work-up.\n4. Provide supportive care.\n5. Follow up on lab results and adjust treatment.`;
         }
-        document.getElementById('out-plan').innerText = plan;
+        if (!edited.plan) document.getElementById('out-plan').innerText = plan;
 
         const handover = `[CC]\n${d.cc}\n\n[Active problems]\n1. ${d.dx}\n\n[Current Treatment]\n${d.tx}\n\n[Past history]\n${d.pmh}`;
-        document.getElementById('out-handover').innerText = handover;
+        if (!edited.handover) document.getElementById('out-handover').innerText = handover;
 
+        // AI 指令永遠依目前欄位重新產生（給 Gemini 用，非編輯區）
         const aiPrompt = `你是一位資深的胸腔內科與重症醫學專科醫師。
 輸入資訊：
 ${summary}
@@ -408,6 +487,84 @@ ${summary}
     }
 
     window.showToast = showToast;
+
+    /* ══════════════════════════════════════════════
+       AI OCR：貼上檢驗報告截圖 → 自動判讀並填入 Lab 欄位
+       透過你自己的 Cloudflare Worker 轉發到 Anthropic API
+       （可沿用 PULM.AI 已經在用的 Vision worker）
+    ═══════════════════════════════════════════════ */
+
+    // TODO：換成你自己的 Cloudflare Worker 端點
+    const OCR_WORKER_URL = "admission-summary.international9901149.workers.dev";
+
+    const OCR_PROMPT = `你是專業的醫檢師與內科醫師。這張圖片是一份檢驗報告（可能同時包含生化、血球分析、凝血功能、尿液分析、動脈血液氣體分析等區塊；同一項目若有多個時間點，越晚的時間代表越新，請取「最新一次」的數值）。
+
+請完成以下工作：
+1. 找出每個項目「最新一次」的數值。
+2. 依臨床常用順序（CBC → 腎功能 → 肝功能 → 發炎指數 → 其他生化 → 動脈血液氣體分析）輸出，格式參考：
+WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP: 4.0, Arterial blood gas pH 7.25, PCO2 40, HCO3 23
+3. 圖片中沒有出現的項目請直接省略，不要用 0 或 N/A 填充，也不要編造數值。
+4. 最後在同一行用括號附上簡短的英文臨床判讀，最多列出 2-3 個最重要的異常發現（例如：(leukocytosis with elevated CRP, suggestive of bacterial infection) 或 (AKI, metabolic acidosis with partial respiratory compensation)）。
+5. 只輸出最終這一行文字本身，不要有任何前言、標題或說明文字。`;
+
+    function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function callLabOCR(base64, mediaType) {
+        const response = await fetch(OCR_WORKER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image: base64,
+                media_type: mediaType,
+                prompt: OCR_PROMPT
+            })
+        });
+        if (!response.ok) throw new Error('Worker 回應錯誤 (HTTP ' + response.status + ')');
+        const data = await response.json();
+        if (!data.text) throw new Error('未取得判讀結果，請確認 Worker 回傳格式為 { text: "..." }');
+        return data.text.trim();
+    }
+
+    async function handleLabPaste(event) {
+        const items = (event.clipboardData || window.clipboardData).items;
+        let imageFile = null;
+        for (const item of items) {
+            if (item.type.indexOf('image') !== -1) {
+                imageFile = item.getAsFile();
+                break;
+            }
+        }
+        if (!imageFile) return; // 沒有圖片就當一般文字貼上處理
+
+        event.preventDefault();
+        const statusEl = document.getElementById('ocr-status');
+        statusEl.style.color = '#3b82f6';
+        statusEl.textContent = '🔎 AI 判讀中，請稍候...';
+
+        try {
+            const base64 = await fileToBase64(imageFile);
+            const resultText = await callLabOCR(base64, imageFile.type || 'image/png');
+            const labField = document.getElementById('lab');
+            labField.value = labField.value.trim()
+                ? labField.value.trim() + '\n' + resultText
+                : resultText;
+            generate();
+            statusEl.style.color = '#10b981';
+            statusEl.textContent = '✅ 已自動填入 Lab results，請再次確認數值無誤';
+        } catch (e) {
+            statusEl.style.color = '#ef4444';
+            statusEl.textContent = '❌ 判讀失敗：' + e.message;
+        }
+    }
+
+    document.getElementById('ocr-zone').addEventListener('paste', handleLabPaste);
 
     generate();
 </script>
