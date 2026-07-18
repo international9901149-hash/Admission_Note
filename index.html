@@ -485,8 +485,7 @@
        （可沿用 PULM.AI 已經在用的 Vision worker）
     ═══════════════════════════════════════════════ */
 
-    // TODO：換成你自己的 Cloudflare Worker 端點
-    const OCR_WORKER_URL = "https://YOUR-WORKER-SUBDOMAIN.workers.dev";
+    const OCR_WORKER_URL = "https://admission-summary.international9901149.workers.dev";
 
     const OCR_PROMPT = `你是專業的醫檢師與內科醫師。這張圖片是一份檢驗報告（可能同時包含生化、血球分析、凝血功能、尿液分析、動脈血液氣體分析等區塊；同一項目若有多個時間點，越晚的時間代表越新，請取「最新一次」的數值）。
 
