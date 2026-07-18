@@ -39,6 +39,7 @@
             fields.forEach(f => {
                 document.getElementById(f).value = data[f] || '';
             });
+            window._resetLabPreview();
             // Restore edited-state so generate() doesn't clobber saved manual edits
             if (data.editedFlags) {
                 try { edited = JSON.parse(data.editedFlags); } catch (e) { edited = { summary:false, admissionPlan:false, plan:false, handover:false }; }
@@ -59,6 +60,7 @@
             document.getElementById('box-admissionPlan').classList.remove('is-edited');
             document.getElementById('ocr-status').textContent = '';
             document.getElementById('ocr-status-tx').textContent = '';
+            window._resetLabPreview();
             generate();
         }
 
@@ -212,6 +214,13 @@
         .ocr-zone .sub { font-size: 11px; color: #9ca3af; display: block; margin-top: 2px; }
         .ocr-status { font-size: 12px; margin-top: 6px; min-height: 16px; }
 
+        /* AI 檢驗判讀結果預覽（異常值標紅粗體） */
+        .lab-preview-wrap { margin-top: 8px; display: none; }
+        .lab-preview-wrap.show { display: block; }
+        .lab-preview-title { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+        .lab-preview { padding: 10px 12px; border-radius: 6px; background: #f9fafb; border: 1px solid #e5e7eb; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; color: #1f2937; }
+        .lab-preview b { color: #dc2626; font-weight: 700; }
+
         /* ── Firebase 儲存區 ── */
         .firebase-section {
             margin-top: 30px;
@@ -345,6 +354,10 @@
                     <span class="sub">AI 會自動判讀並依格式填入上方欄位（含異常判斷）</span>
                 </div>
                 <div class="ocr-status" id="ocr-status"></div>
+                <div class="lab-preview-wrap" id="lab-preview-wrap">
+                    <div class="lab-preview-title">🔎 AI 判讀結果（<b>紅字粗體</b> = 異常值，供核對用，實際請以上方欄位為準）</div>
+                    <div class="lab-preview" id="lab-preview"></div>
+                </div>
             </td>
         </tr>
         <tr><th>影像檢查 (Img)</th><td><textarea id="img" placeholder="CXR/CT findings..." oninput="generate()"></textarea></td></tr>
@@ -537,8 +550,32 @@
 2. 依臨床常用順序（CBC → 腎功能 → 肝功能 → 發炎指數 → 其他生化 → 動脈血液氣體分析）輸出，格式參考：
 WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP: 4.0, Arterial blood gas pH 7.25, PCO2 40, HCO3 23
 3. 圖片中沒有出現的項目請直接省略，不要用 0 或 N/A 填充，也不要編造數值。
-4. 最後在同一行用括號附上簡短的英文臨床判讀，最多列出 2-3 個最重要的異常發現（例如：(leukocytosis with elevated CRP, suggestive of bacterial infection) 或 (AKI, metabolic acidosis with partial respiratory compensation)）。
-5. 只輸出最終這一行文字本身，不要有任何前言、標題或說明文字。`;
+4. 【極重要，攸關病人安全，務必仔細檢查、不可遺漏】：依你的臨床判斷，找出所有超出正常參考範圍的「異常」數值（不論輕微或嚴重都要標記，寧可多標記也不要遺漏），並將該項目的「名稱與數值」以兩個星號包住，例如：WBC: **15000**, Hb: **6.5**, Creatinine: **3.2**。正常範圍內的數值不要加星號。
+5. 最後在同一行用括號附上簡短的英文臨床判讀，最多列出 2-3 個最重要的異常發現（例如：(leukocytosis with elevated CRP, suggestive of bacterial infection) 或 (AKI, metabolic acidosis with partial respiratory compensation)）。
+6. 只輸出最終這一行文字本身，不要有任何前言、標題或說明文字，除了步驟4的星號外不要使用其他格式符號。`;
+
+    let labPreviewRaw = '';
+
+    function escapeHtml(str) {
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function renderLabPreview() {
+        const wrapEl = document.getElementById('lab-preview-wrap');
+        const previewEl = document.getElementById('lab-preview');
+        if (!labPreviewRaw) {
+            wrapEl.classList.remove('show');
+            previewEl.innerHTML = '';
+            return;
+        }
+        previewEl.innerHTML = escapeHtml(labPreviewRaw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+        wrapEl.classList.add('show');
+    }
+
+    window._resetLabPreview = function () {
+        labPreviewRaw = '';
+        renderLabPreview();
+    };
 
     function fileToBase64(file) {
         return new Promise((resolve, reject) => {
@@ -584,10 +621,13 @@ WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP
         try {
             const base64 = await fileToBase64(imageFile);
             const resultText = await callVisionOCR(base64, imageFile.type || 'image/png', OCR_PROMPT);
+            const plainText = resultText.replace(/\*\*/g, ''); // strip highlight markers for the stored plain-text value
             const labField = document.getElementById('lab');
             labField.value = labField.value.trim()
-                ? labField.value.trim() + '\n' + resultText
-                : resultText;
+                ? labField.value.trim() + '\n' + plainText
+                : plainText;
+            labPreviewRaw = labPreviewRaw ? labPreviewRaw + '\n' + resultText : resultText;
+            renderLabPreview();
             generate();
             statusEl.style.color = '#10b981';
             statusEl.textContent = '✅ 已自動填入 Lab results，請再次確認數值無誤';
