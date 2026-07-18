@@ -178,6 +178,7 @@
         .reset-btn { background: transparent; border: 1px solid #9ca3af; color: #6b7280; padding: 2px 7px; border-radius: 4px; cursor: pointer; font-size: 11px; }
         .reset-btn:hover { background: #e5e7eb; }
         .hint-text { font-size: 12px; color: #6d28d9; margin-bottom: 10px; font-style: italic; }
+        .advice-disclaimer { font-size: 11px; color: #9ca3af; margin-top: 8px; }
         .edit-hint { font-size: 11px; color: #9ca3af; margin-top: 6px; }
 
         /* 手動編輯狀態 */
@@ -382,11 +383,12 @@
 
         <div class="box insight-box">
             <div class="box-title" style="color: #5b21b6;">
-                AI Clinical Advisory Prompt (餵給 Gemini)
-                <button class="copy-btn btn-purple" onclick="copyText('out-prompt')">Copy Prompt for AI</button>
+                AI Clinical Advisory Prompt
+                <button class="copy-btn btn-purple" id="advice-btn" onclick="getAIAdvice()">🩺 取得 AI 建議</button>
             </div>
-            <div class="hint-text">※ 點擊按鈕複製後，直接貼給 Gemini 即可獲得專家建議。</div>
-            <div id="out-prompt" class="content" style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px;">準備生成指令...</div>
+            <div class="hint-text">※ 點擊按鈕，AI 會根據上方目前的 Admission Summary 與 Management Plan，針對治療的有效性與安全性直接在此頁面提供評估，不需另外複製貼到其他平台。</div>
+            <div id="out-prompt" class="content" style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px;">點擊上方按鈕，取得 AI 臨床建議...</div>
+            <div class="advice-disclaimer">⚠️ AI 建議僅供臨床參考，實際診斷與治療仍需醫師專業判斷。</div>
         </div>
     </div>
 
@@ -456,17 +458,6 @@
 
         const handover = `[CC]\n${d.cc}\n\n[Active problems]\n1. ${d.dx}\n\n[Current Treatment]\n${d.tx}\n\n[Past history]\n${d.pmh}`;
         if (!edited.handover) document.getElementById('out-handover').innerText = handover;
-
-        // AI 指令永遠依目前欄位重新產生（給 Gemini 用，非編輯區）
-        const aiPrompt = `你是一位資深的胸腔內科與重症醫學專科醫師。
-輸入資訊：
-${summary}
-
-任務：
-1. 檢查目前的治療方案（抗生素選擇、劑量）是否符合最新指引。
-2. 針對該診斷提供 3 個臨床注意要點（如：副作用監測、追蹤影像時間點）。
-3. 若有潛在的藥物交互作用或併發症風險，請一併提醒。`;
-        document.getElementById('out-prompt').innerText = aiPrompt;
     }
 
     function copyText(id) {
@@ -495,7 +486,7 @@ ${summary}
     ═══════════════════════════════════════════════ */
 
     // TODO：換成你自己的 Cloudflare Worker 端點
-    const OCR_WORKER_URL = "https://admission-summary.international9901149.workers.dev";
+    const OCR_WORKER_URL = "https://YOUR-WORKER-SUBDOMAIN.workers.dev";
 
     const OCR_PROMPT = `你是專業的醫檢師與內科醫師。這張圖片是一份檢驗報告（可能同時包含生化、血球分析、凝血功能、尿液分析、動脈血液氣體分析等區塊；同一項目若有多個時間點，越晚的時間代表越新，請取「最新一次」的數值）。
 
@@ -565,6 +556,71 @@ WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP
     }
 
     document.getElementById('ocr-zone').addEventListener('paste', handleLabPaste);
+
+    /* ══════════════════════════════════════════════
+       AI Clinical Advisory：直接在頁面上取得治療有效性
+       與安全性評估，透過同一個 Cloudflare Worker（文字模式，
+       不帶 image 欄位）
+    ═══════════════════════════════════════════════ */
+
+    function buildAdvisoryPrompt() {
+        const summary = document.getElementById('out-summary').innerText;
+        const plan = document.getElementById('out-plan').innerText;
+        return `你是一位資深的胸腔內科與重症醫學專科醫師，請仔細審閱以下住院病例摘要與目前的治療計畫。
+
+【Admission Summary】
+${summary}
+
+【Management Plan】
+${plan}
+
+請針對「治療的有效性」與「安全性」提供具體評估，並依下列結構以正體中文回覆：
+
+1. 有效性評估：目前的治療方案（含藥物選擇、劑量、處置）是否符合最新臨床指引？是否足以涵蓋可能的致病機轉？
+2. 安全性評估：是否有潛在的藥物交互作用、需依腎功能／肝功能調整劑量之處、或需要特別監測的副作用？
+3. 臨床注意要點：列出 2-3 個最值得追蹤的項目（如：影像追蹤時間點、特定檢驗數值趨勢）。
+4. 若有更適合的替代方案或建議調整之處，請簡要說明。
+
+請條列清楚、用詞精準，避免空泛的建議。`;
+    }
+
+    async function callAdvisoryAI(prompt) {
+        const response = await fetch(OCR_WORKER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt })
+        });
+        if (!response.ok) {
+            const errBody = await response.text();
+            throw new Error('Worker 回應錯誤 (HTTP ' + response.status + ')：' + errBody);
+        }
+        const data = await response.json();
+        if (!data.text) throw new Error('未取得 AI 回應，請確認 Worker 回傳格式為 { text: "..." }');
+        return data.text.trim();
+    }
+
+    async function getAIAdvice() {
+        const btn = document.getElementById('advice-btn');
+        const outEl = document.getElementById('out-prompt');
+        const originalBtnText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = '分析中...';
+        outEl.style.color = '#3b82f6';
+        outEl.innerText = '🩺 AI 正在分析目前的病例與治療計畫，請稍候...';
+
+        try {
+            const prompt = buildAdvisoryPrompt();
+            const advice = await callAdvisoryAI(prompt);
+            outEl.style.color = '#1f2937';
+            outEl.innerText = advice;
+        } catch (e) {
+            outEl.style.color = '#ef4444';
+            outEl.innerText = '❌ 取得建議失敗：' + e.message;
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalBtnText;
+        }
+    }
 
     generate();
 </script>
