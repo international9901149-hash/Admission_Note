@@ -28,6 +28,7 @@
             fields.forEach(f => { data[f] = document.getElementById(f).value; });
             // Persist manually-edited output boxes too, so reloading a record restores edits
             data.summary = document.getElementById('out-summary').innerText;
+            data.admissionPlan = document.getElementById('out-admissionPlan').innerText;
             data.plan = document.getElementById('out-plan').innerText;
             data.handover = document.getElementById('out-handover').innerText;
             data.editedFlags = JSON.stringify(edited);
@@ -40,20 +41,24 @@
             });
             // Restore edited-state so generate() doesn't clobber saved manual edits
             if (data.editedFlags) {
-                try { edited = JSON.parse(data.editedFlags); } catch (e) { edited = { summary:false, plan:false, handover:false }; }
+                try { edited = JSON.parse(data.editedFlags); } catch (e) { edited = { summary:false, admissionPlan:false, plan:false, handover:false }; }
             } else {
-                edited = { summary:false, plan:false, handover:false };
+                edited = { summary:false, admissionPlan:false, plan:false, handover:false };
             }
             generate();
             if (edited.summary && data.summary) document.getElementById('out-summary').innerText = data.summary;
+            if (edited.admissionPlan && data.admissionPlan) document.getElementById('out-admissionPlan').innerText = data.admissionPlan;
             if (edited.plan && data.plan) document.getElementById('out-plan').innerText = data.plan;
             if (edited.handover && data.handover) document.getElementById('out-handover').innerText = data.handover;
         }
 
         function clearForm() {
             fields.forEach(f => { document.getElementById(f).value = ''; });
-            edited = { summary:false, plan:false, handover:false };
+            edited = { summary:false, admissionPlan:false, plan:false, handover:false };
+            document.getElementById('out-admissionPlan').innerText = '點擊上方「🩺 產生說明書」，AI 會依目前病歷資料自動填入診斷、症狀等內容（正體中文），其餘欄位（說明對象、說明者等）請手動填寫。';
+            document.getElementById('box-admissionPlan').classList.remove('is-edited');
             document.getElementById('ocr-status').textContent = '';
+            document.getElementById('ocr-status-tx').textContent = '';
             generate();
         }
 
@@ -165,6 +170,7 @@
         .box-title { font-weight: bold; margin-bottom: 8px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
         .box-title .btn-group { display: flex; gap: 6px; align-items: center; }
         .summary-box { background: #eff6ff; border: 1px solid #bfdbfe; }
+        .admission-plan-box { background: #fdf2f8; border: 1px solid #fbcfe8; }
         .plan-box { background: #ecfdf5; border: 1px solid #a7f3d0; }
         .handover-box { background: #fffbeb; border: 1px solid #fde68a; }
         .insight-box { background: #f5f3ff; border: 2px dashed #8b5cf6; }
@@ -174,6 +180,7 @@
         .btn-blue { background: #3b82f6; }
         .btn-green { background: #10b981; }
         .btn-amber { background: #d97706; }
+        .btn-pink { background: #db2777; }
         .btn-purple { background: #8b5cf6; font-weight: bold; }
         .reset-btn { background: transparent; border: 1px solid #9ca3af; color: #6b7280; padding: 2px 7px; border-radius: 4px; cursor: pointer; font-size: 11px; }
         .reset-btn:hover { background: #e5e7eb; }
@@ -342,7 +349,17 @@
         </tr>
         <tr><th>影像檢查 (Img)</th><td><textarea id="img" placeholder="CXR/CT findings..." oninput="generate()"></textarea></td></tr>
         <tr><th>診斷 (Diagnosis)</th><td><input type="text" id="dx" placeholder="Main diagnosis..." oninput="generate()"></td></tr>
-        <tr><th>治療 (Treatment)</th><td><textarea id="tx" placeholder="Antibiotics, procedures, medications..." oninput="generate()"></textarea></td></tr>
+        <tr>
+            <th>治療 (Treatment)</th>
+            <td>
+                <textarea id="tx" placeholder="Antibiotics, procedures, medications..." oninput="generate()"></textarea>
+                <div class="ocr-zone" id="ocr-zone-tx" tabindex="0">
+                    💊 點一下這裡，再按 Ctrl+V 貼上藥單截圖
+                    <span class="sub">AI 會自動判讀並列出藥物清單（畫面顯示的英文名稱）</span>
+                </div>
+                <div class="ocr-status" id="ocr-status-tx"></div>
+            </td>
+        </tr>
     </table>
     </div>
 
@@ -356,6 +373,18 @@
                 </div>
             </div>
             <div id="out-summary" class="content" contenteditable="true" oninput="markEdited('summary')">Please fill in details...</div>
+        </div>
+
+        <div class="box admission-plan-box" id="box-admissionPlan">
+            <div class="box-title" style="color: #9d174d;">
+                <span>住院診療計畫 <span class="edited-badge">已手動編輯</span></span>
+                <div class="btn-group">
+                    <button class="reset-btn" title="還原為預設內容" onclick="resetBox('admissionPlan')">↺ 還原</button>
+                    <button class="copy-btn btn-pink" id="admission-plan-btn" onclick="getAdmissionPlan()">🩺 產生說明書</button>
+                    <button class="copy-btn btn-pink" onclick="copyText('out-admissionPlan')">Copy 說明書</button>
+                </div>
+            </div>
+            <div id="out-admissionPlan" class="content" contenteditable="true" oninput="markEdited('admissionPlan')">點擊上方「🩺 產生說明書」，AI 會依目前病歷資料自動填入診斷、症狀等內容（正體中文），其餘欄位（說明對象、說明者等）請手動填寫。</div>
         </div>
 
         <div class="box plan-box" id="box-plan">
@@ -379,7 +408,7 @@
             </div>
             <div id="out-handover" class="content" contenteditable="true" oninput="markEdited('handover')">Generating sign-out summary...</div>
         </div>
-        <div class="edit-hint">💡 三個框內文字皆可直接點擊編輯；修改後之後再更動上方欄位就不會被自動覆蓋，按「↺ 還原」可以回復自動產生內容。</div>
+        <div class="edit-hint">💡 以上輸出框內文字皆可直接點擊編輯；修改後之後再更動上方欄位就不會被自動覆蓋，按「↺ 還原」可以回復自動產生內容。</div>
 
         <div class="box insight-box">
             <div class="box-title" style="color: #5b21b6;">
@@ -410,8 +439,8 @@
 </div>
 
 <script>
-    // 追蹤三個輸出框是否已被手動編輯過（避免自動產生覆蓋掉醫師的修改）
-    let edited = { summary: false, plan: false, handover: false };
+    // 追蹤輸出框是否已被手動編輯過（避免自動產生覆蓋掉醫師的修改）
+    let edited = { summary: false, admissionPlan: false, plan: false, handover: false };
 
     function markEdited(key) {
         edited[key] = true;
@@ -421,7 +450,11 @@
     function resetBox(key) {
         edited[key] = false;
         document.getElementById('box-' + key).classList.remove('is-edited');
-        generate();
+        if (key === 'admissionPlan') {
+            document.getElementById('out-admissionPlan').innerText = '點擊上方「🩺 產生說明書」，AI 會依目前病歷資料自動填入診斷、症狀等內容（正體中文），其餘欄位（說明對象、說明者等）請手動填寫。';
+        } else {
+            generate();
+        }
     }
 
     function toNumberedList(text) {
@@ -516,14 +549,14 @@ WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP
         });
     }
 
-    async function callLabOCR(base64, mediaType) {
+    async function callVisionOCR(base64, mediaType, prompt) {
         const response = await fetch(OCR_WORKER_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 image: base64,
                 media_type: mediaType,
-                prompt: OCR_PROMPT
+                prompt: prompt
             })
         });
         if (!response.ok) throw new Error('Worker 回應錯誤 (HTTP ' + response.status + ')');
@@ -550,7 +583,7 @@ WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP
 
         try {
             const base64 = await fileToBase64(imageFile);
-            const resultText = await callLabOCR(base64, imageFile.type || 'image/png');
+            const resultText = await callVisionOCR(base64, imageFile.type || 'image/png', OCR_PROMPT);
             const labField = document.getElementById('lab');
             labField.value = labField.value.trim()
                 ? labField.value.trim() + '\n' + resultText
@@ -565,6 +598,56 @@ WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP
     }
 
     document.getElementById('ocr-zone').addEventListener('paste', handleLabPaste);
+
+    /* ══════════════════════════════════════════════
+       AI OCR：貼上藥單截圖 → 自動判讀並列出藥物清單，
+       填入 Treatment 欄位（同一個 Cloudflare Worker）
+    ═══════════════════════════════════════════════ */
+
+    const MED_PROMPT = `你是專業藥師。這張圖片是一張藥單或醫囑用藥清單截圖（可能包含針劑與口服藥）。
+
+請完成以下工作：
+1. 依藥單上出現的順序，逐一列出每一項藥物。
+2. 每一項的格式為：畫面上顯示的藥品英文名稱（不需翻譯成學名或中文) 劑型 劑量 數量 用法頻次，直接照抄畫面上顯示的文字排列方式即可，例如：
+Tapimycin inj 2.25g 2 vail Q8H
+Sevikar tab 5/20mg 1 tab BID
+3. 每一項藥物獨立一行，不要用逗號、分號或項目符號。
+4. 若畫面上某藥物缺少劑量或頻次等資訊，就只列出畫面上有寫出的部分，不要編造或猜測數值。
+5. 只輸出藥物清單本身，不要加上任何前言、標題、編號或說明文字。`;
+
+    async function handleMedPaste(event) {
+        const items = (event.clipboardData || window.clipboardData).items;
+        let imageFile = null;
+        for (const item of items) {
+            if (item.type.indexOf('image') !== -1) {
+                imageFile = item.getAsFile();
+                break;
+            }
+        }
+        if (!imageFile) return; // 沒有圖片就當一般文字貼上處理
+
+        event.preventDefault();
+        const statusEl = document.getElementById('ocr-status-tx');
+        statusEl.style.color = '#3b82f6';
+        statusEl.textContent = '🔎 AI 判讀藥單中，請稍候...';
+
+        try {
+            const base64 = await fileToBase64(imageFile);
+            const resultText = await callVisionOCR(base64, imageFile.type || 'image/png', MED_PROMPT);
+            const txField = document.getElementById('tx');
+            txField.value = txField.value.trim()
+                ? txField.value.trim() + '\n' + resultText
+                : resultText;
+            generate();
+            statusEl.style.color = '#10b981';
+            statusEl.textContent = '✅ 已自動填入藥物清單，請再次確認品項與劑量無誤';
+        } catch (e) {
+            statusEl.style.color = '#ef4444';
+            statusEl.textContent = '❌ 判讀失敗：' + e.message;
+        }
+    }
+
+    document.getElementById('ocr-zone-tx').addEventListener('paste', handleMedPaste);
 
     /* ══════════════════════════════════════════════
        AI Clinical Advisory：直接在頁面上取得治療有效性
@@ -621,6 +704,74 @@ ${note}
         } catch (e) {
             outEl.style.color = '#ef4444';
             outEl.innerText = '❌ 取得建議失敗：' + e.message;
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalBtnText;
+        }
+    }
+
+    /* ══════════════════════════════════════════════
+       AI 住院診療計畫說明書：將診斷、主訴等翻譯並整理成
+       給家屬閱讀的正體中文說明書（同一個 Cloudflare Worker，文字模式）
+    ═══════════════════════════════════════════════ */
+
+    function buildAdmissionPlanPrompt() {
+        const age = document.getElementById('age').value || '[Age]';
+        const gender = document.getElementById('gender').value || '[Gender]';
+        const cc = document.getElementById('cc').value || '（未填寫）';
+        const dx = document.getElementById('dx').value || '（未填寫）';
+        const lab = document.getElementById('lab').value || '（未填寫）';
+        const img = document.getElementById('img').value || '（未填寫）';
+        const tx = document.getElementById('tx').value || '（未填寫）';
+        const now = new Date().toLocaleString('zh-TW');
+
+        return `你是一位資深主治醫師，需要準備一份給病患家屬閱讀的「住院診療計畫說明書」。請務必使用正體中文（繁體字），絕對不可使用簡體字，並完全依照下列格式輸出（保留所有標題、編號、換行）：
+
+說明時間: ${now}
+說明對象: 
+說明內容:
+本院醫療團隊，本著全人醫療照護理念與人權考量，重視您的就醫各項權利，為使您對整體醫療照護有進一步的瞭解，並減少您不必要的焦慮，特制訂本說明書。
+
+(一)健康狀況、症狀
+A.入院暫定診斷: [將以下英文診斷翻譯為正體中文醫學用語：${dx}]
+B.住院原因(主要醫療問題)說明:
+　主要症狀: [將以下英文主訴翻譯為正體中文：${cc}]
+　異常檢驗值告知: [若以下檢驗報告內容顯示有異常數值，請用一句正體中文簡單說明；若無明顯異常或資訊不足則留空——檢驗報告原文：${lab}]
+　抗生素治療: [若以下治療內容包含抗生素，請用一句正體中文簡單說明藥名與治療目的；若無則留空——治療內容原文：${tx}]
+　接受檢查: [若以下影像或檢查內容顯示病人已安排或接受特定檢查，請用一句正體中文簡單說明；若無則留空——影像/檢查原文：${img}]
+　其他: 
+
+(二)住院診療計畫概要
+A. [依病況用正體中文簡單說明整體治療方向，不超過50個中文字；病人為${age}歲${gender}]
+B. 主要處置:
+1. 依病情需要監測體溫、生命徵象變化。
+2. 依病況給予：與您疾病相關日常生活自我照護之衛教、營養衛教和飲食調整。
+3. 依評估因意識不清楚，會自扯管路，抓傷，說明保護約束重要性，防意外發生，家屬同意，及完成紙本同意書簽署。
+4. 依評估因步態不穩，乏力，下床易跌倒發生，說明保護約束重要性，防下床跌倒，家屬同意，完成同意書簽署。
+C.其他說明: 
+
+說明者: 主治醫師:  /  專科護理師
+
+請只輸出上述說明書本身（依照格式），不要加上任何前言、註解或 Markdown 符號。`;
+    }
+
+    async function getAdmissionPlan() {
+        const btn = document.getElementById('admission-plan-btn');
+        const outEl = document.getElementById('out-admissionPlan');
+        const originalBtnText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = '產生中...';
+        outEl.style.color = '#3b82f6';
+        outEl.innerText = '🩺 AI 正在依目前病歷資料撰寫住院診療計畫說明書，請稍候...';
+
+        try {
+            const prompt = buildAdmissionPlanPrompt();
+            const text = await callAdvisoryAI(prompt);
+            outEl.style.color = '#1f2937';
+            outEl.innerText = text;
+        } catch (e) {
+            outEl.style.color = '#ef4444';
+            outEl.innerText = '❌ 產生失敗：' + e.message;
         } finally {
             btn.disabled = false;
             btn.innerText = originalBtnText;
