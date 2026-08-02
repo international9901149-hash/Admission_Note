@@ -21,11 +21,23 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        const fields = ['age','gender','pmh','cc','assoc','neg','pe','lab','img','dx','tx'];
+        const fields = ['age','pmh','cc','assoc','neg','pe','img','dx','tx','o2-rate-nc','o2-rate-sm','o2-rate-vm','o2-rate-bipap'];
+        const radioGroups = ['gender','o2','ngtube'];
+
+        function getRadioGroupValue(name) {
+            const checked = document.querySelector(`input[name="${name}"]:checked`);
+            return checked ? checked.value : '';
+        }
+
+        function setRadioGroupValue(name, value) {
+            document.querySelectorAll(`input[name="${name}"]`).forEach(el => { el.checked = (el.value === value); });
+        }
 
         function getFormData() {
             const data = {};
             fields.forEach(f => { data[f] = document.getElementById(f).value; });
+            radioGroups.forEach(g => { data[g] = getRadioGroupValue(g); });
+            data.lab = document.getElementById('lab').innerHTML;
             // Persist manually-edited output boxes too, so reloading a record restores edits
             data.summary = document.getElementById('out-summary').innerText;
             data.admissionPlan = document.getElementById('out-admissionPlan').innerText;
@@ -39,7 +51,8 @@
             fields.forEach(f => {
                 document.getElementById(f).value = data[f] || '';
             });
-            window._resetLabPreview();
+            radioGroups.forEach(g => { setRadioGroupValue(g, data[g] || ''); });
+            document.getElementById('lab').innerHTML = data.lab || '';
             // Restore edited-state so generate() doesn't clobber saved manual edits
             if (data.editedFlags) {
                 try { edited = JSON.parse(data.editedFlags); } catch (e) { edited = { summary:false, admissionPlan:false, plan:false, handover:false }; }
@@ -55,12 +68,13 @@
 
         function clearForm() {
             fields.forEach(f => { document.getElementById(f).value = ''; });
+            radioGroups.forEach(g => { setRadioGroupValue(g, ''); });
+            document.getElementById('lab').innerHTML = '';
             edited = { summary:false, admissionPlan:false, plan:false, handover:false };
             document.getElementById('out-admissionPlan').innerText = '點擊上方「🩺 產生說明書」，AI 會依目前病歷資料自動填入診斷、症狀等內容（正體中文），其餘欄位（說明對象、說明者等）請手動填寫。';
             document.getElementById('box-admissionPlan').classList.remove('is-edited');
             document.getElementById('ocr-status').textContent = '';
             document.getElementById('ocr-status-tx').textContent = '';
-            window._resetLabPreview();
             generate();
         }
 
@@ -166,6 +180,11 @@
         input, textarea { width: 100%; border: 1px solid #d1d5db; border-radius: 4px; padding: 6px 10px; box-sizing: border-box; font-size: 14px; outline: none; }
         input:focus, textarea:focus { border-color: #3498db; }
         textarea { resize: vertical; min-height: 45px; }
+        input[type="radio"], input[type="checkbox"] { width: auto; }
+
+        .radio-group { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; }
+        .radio-option { display: inline-flex; align-items: center; gap: 5px; font-weight: normal; font-size: 14px; white-space: nowrap; cursor: pointer; }
+        .radio-option .rate-input { width: 60px !important; padding: 3px 6px; font-size: 13px; margin-left: 2px; }
 
         .result-section { display: flex; flex-direction: column; gap: 15px; margin-top: 20px; }
         .box { padding: 15px; border-radius: 6px; position: relative; }
@@ -214,12 +233,24 @@
         .ocr-zone .sub { font-size: 11px; color: #9ca3af; display: block; margin-top: 2px; }
         .ocr-status { font-size: 12px; margin-top: 6px; min-height: 16px; }
 
-        /* AI 檢驗判讀結果預覽（異常值標紅粗體） */
-        .lab-preview-wrap { margin-top: 8px; display: none; }
-        .lab-preview-wrap.show { display: block; }
-        .lab-preview-title { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
-        .lab-preview { padding: 10px 12px; border-radius: 6px; background: #f9fafb; border: 1px solid #e5e7eb; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; color: #1f2937; }
-        .lab-preview b { color: #dc2626; font-weight: 700; }
+        /* Lab 欄位：可直接編輯，AI 判讀後異常值以紅字粗體標示 */
+        .editable-input {
+            margin-top: 8px;
+            width: 100%;
+            min-height: 45px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            padding: 6px 10px;
+            box-sizing: border-box;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            color: #1f2937;
+        }
+        .editable-input:focus { outline: none; border-color: #3498db; }
+        .editable-input:empty:before { content: attr(data-placeholder); color: #9ca3af; }
+        .editable-input b { color: #dc2626; font-weight: 700; }
+        .editable-input, .plan-box .content { font-family: 'Courier New', Consolas, 'SFMono-Regular', monospace; }
 
         /* ── Firebase 儲存區 ── */
         .firebase-section {
@@ -339,25 +370,51 @@
     <div id="input-section">
     <table>
         <tr><th>年齡 (Age)</th><td><input type="text" id="age" placeholder="e.g. 70" oninput="generate()"></td></tr>
-        <tr><th>性別 (Gender)</th><td><input type="text" id="gender" placeholder="male / female" oninput="generate()"></td></tr>
+        <tr>
+            <th>性別 (Gender)</th>
+            <td>
+                <div class="radio-group">
+                    <label class="radio-option"><input type="radio" name="gender" value="male" onchange="generate()"> Male</label>
+                    <label class="radio-option"><input type="radio" name="gender" value="female" onchange="generate()"> Female</label>
+                </div>
+            </td>
+        </tr>
         <tr><th>過去病史 (PMH)</th><td><textarea id="pmh" placeholder="e.g. Schizophrenia, HTN" oninput="generate()"></textarea></td></tr>
         <tr><th>主訴 (CC)</th><td><textarea id="cc" placeholder="Chief complaint..." oninput="generate()"></textarea></td></tr>
         <tr><th>伴隨症狀 (Assoc.)</th><td><textarea id="assoc" placeholder="Associated symptoms..." oninput="generate()"></textarea></td></tr>
         <tr><th>否認症狀 (Neg.)</th><td><textarea id="neg" placeholder="Negative symptoms..." oninput="generate()"></textarea></td></tr>
         <tr><th>身體檢查 (PE)</th><td><textarea id="pe" placeholder="Physical exam..." oninput="generate()"></textarea></td></tr>
         <tr>
+            <th>O2 therapy</th>
+            <td>
+                <div class="radio-group">
+                    <label class="radio-option"><input type="radio" name="o2" value="nasal cannula" onchange="generate()"> Nasal cannula <input type="text" id="o2-rate-nc" class="rate-input" placeholder="L/min" oninput="generate()"></label>
+                    <label class="radio-option"><input type="radio" name="o2" value="simple mask" onchange="generate()"> Simple mask <input type="text" id="o2-rate-sm" class="rate-input" placeholder="L/min" oninput="generate()"></label>
+                    <label class="radio-option"><input type="radio" name="o2" value="Venturi mask" onchange="generate()"> Venturi mask <input type="text" id="o2-rate-vm" class="rate-input" placeholder="L/min" oninput="generate()"></label>
+                    <label class="radio-option"><input type="radio" name="o2" value="BiPAP" onchange="generate()"> BiPAP <input type="text" id="o2-rate-bipap" class="rate-input" placeholder="L/min" oninput="generate()"></label>
+                    <label class="radio-option"><input type="radio" name="o2" value="tracheostomy" onchange="generate()"> Tracheostomy</label>
+                    <label class="radio-option"><input type="radio" name="o2" value="ETT+MV" onchange="generate()"> ETT+MV</label>
+                </div>
+            </td>
+        </tr>
+        <tr>
+            <th>NG tube</th>
+            <td>
+                <div class="radio-group">
+                    <label class="radio-option"><input type="radio" name="ngtube" value="yes" onchange="generate()"> Yes</label>
+                    <label class="radio-option"><input type="radio" name="ngtube" value="no" onchange="generate()"> No</label>
+                </div>
+            </td>
+        </tr>
+        <tr>
             <th>抽血報告 (Lab)</th>
             <td>
-                <textarea id="lab" placeholder="Lab results..." oninput="generate()"></textarea>
                 <div class="ocr-zone" id="ocr-zone" tabindex="0">
                     📋 點一下這裡，再按 Ctrl+V 貼上檢驗報告截圖
-                    <span class="sub">AI 會自動判讀並依格式填入上方欄位（含異常判斷）</span>
+                    <span class="sub">AI 會自動整理成對齊表格（近3筆），異常值以紅字粗體標示</span>
                 </div>
                 <div class="ocr-status" id="ocr-status"></div>
-                <div class="lab-preview-wrap" id="lab-preview-wrap">
-                    <div class="lab-preview-title">🔎 AI 判讀結果（<b>紅字粗體</b> = 異常值，供核對用，實際請以上方欄位為準）</div>
-                    <div class="lab-preview" id="lab-preview"></div>
-                </div>
+                <div id="lab" class="editable-input" contenteditable="true" data-placeholder="Lab results..." oninput="generate()"></div>
             </td>
         </tr>
         <tr><th>影像檢查 (Img)</th><td><textarea id="img" placeholder="CXR/CT findings..." oninput="generate()"></textarea></td></tr>
@@ -476,16 +533,45 @@
         return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
     }
 
+    function getRadioValue(name) {
+        const checked = document.querySelector(`input[name="${name}"]:checked`);
+        return checked ? checked.value : '';
+    }
+
+    function getO2Value() {
+        const device = getRadioValue('o2');
+        if (!device) return '';
+        const rateInputs = {
+            'nasal cannula': 'o2-rate-nc',
+            'simple mask': 'o2-rate-sm',
+            'Venturi mask': 'o2-rate-vm',
+            'BiPAP': 'o2-rate-bipap'
+        };
+        const rateId = rateInputs[device];
+        if (rateId) {
+            const rate = document.getElementById(rateId).value.trim();
+            return rate ? `${device} ${rate}L/min` : device;
+        }
+        return device;
+    }
+
+    function getNGTubeValue() {
+        const v = getRadioValue('ngtube');
+        if (v === 'yes') return 'Yes';
+        if (v === 'no') return 'No';
+        return '';
+    }
+
     function generate() {
         const d = {
             age: document.getElementById('age').value || '[Age]',
-            gender: document.getElementById('gender').value || '[Gender]',
+            gender: getRadioValue('gender') || '[Gender]',
             pmh: document.getElementById('pmh').value || '[Past History]',
             cc: document.getElementById('cc').value || '[Chief Complaint]',
             assoc: document.getElementById('assoc').value || '[Assoc. Sx]',
             neg: document.getElementById('neg').value || '[Neg. Sx]',
             pe: document.getElementById('pe').value || '[PE]',
-            lab: document.getElementById('lab').value || '[Lab]',
+            lab: document.getElementById('lab').innerText.trim() || '[Lab]',
             img: document.getElementById('img').value || '[Img]',
             dx: document.getElementById('dx').value || '[Diagnosis]',
             tx: document.getElementById('tx').value || '[Treatment]'
@@ -509,7 +595,9 @@
         const acceptanceNote = `${summary}\n[Management plan]\n${plan}`;
         if (!edited.summary) document.getElementById('out-summary').innerText = acceptanceNote;
 
-        const progressNote = `S: ${d.cc}\n\nO:\n[Physical exam]\nGeneral condition: Ill-looking appearance\nMentality: E4V5M6; Clear consciousness; intact orientation\nVital signs: PR:    RR:    BT:    SpO2:\nI/O:\nHEENT: No pale conjunctiva, no icteric sclera\nNeck: Supple neck; no palpable lymph node\nChest: Clear breath sound; no rales, no wheezing\nHeart: Regular heart beat\nAbdomen: No operation scar, normoactive bowel sound, no tenderness, no Murphy's sign, no McBurney's point tenderness; no rebounding pain\nBACK & SPINE: No CV angle knocking pain\nEXTREMITIES: No limitation of movement; no pitting edema; old scar\n\n[Lab data]\n${d.lab}\n\n[Image]\n${d.img}\n\nA:\n[Active problem]\n${toNumberedList(d.dx)}\n[Inactive problems]\n${toNumberedList(d.pmh)}\n\nP:\n${plan}`;
+        const o2 = getO2Value();
+        const ngTube = getNGTubeValue();
+        const progressNote = `S: ${d.cc}\n\nO:\n[Physical exam]\nO2 therapy: ${o2}\nNG tube: ${ngTube}\nGeneral condition: Ill-looking appearance\nMentality: E4V5M6; Clear consciousness; intact orientation\nVital signs: PR:    RR:    BT:    SpO2:\nI/O:\nHEENT: No pale conjunctiva, no icteric sclera\nNeck: Supple neck; no palpable lymph node\nChest: Clear breath sound; no rales, no wheezing\nHeart: Regular heart beat\nAbdomen: No operation scar, normoactive bowel sound, no tenderness, no Murphy's sign, no McBurney's point tenderness; no rebounding pain\nBACK & SPINE: No CV angle knocking pain\nEXTREMITIES: No limitation of movement; no pitting edema; old scar\n\n[Lab data]\n${d.lab}\n\n[Image]\n${d.img}\n\nA:\n[Active problem]\n1. ${d.dx}\n[Inactive problems]\n${toNumberedList(d.pmh)}\n\nP:\n${plan}`;
         if (!edited.plan) document.getElementById('out-plan').innerText = progressNote;
 
         const handover = `[CC]\n${d.cc}\n\n[Active problems]\n1. ${d.dx}\n\n[Current Treatment]\n${d.tx}\n\n[Past history]\n${d.pmh}`;
@@ -543,39 +631,48 @@
 
     const OCR_WORKER_URL = "https://admission-summary.international9901149.workers.dev";
 
-    const OCR_PROMPT = `你是專業的醫檢師與內科醫師。這張圖片是一份檢驗報告（可能同時包含生化、血球分析、凝血功能、尿液分析、動脈血液氣體分析等區塊；同一項目若有多個時間點，越晚的時間代表越新，請取「最新一次」的數值）。
+    const OCR_PROMPT = `你是專業的醫檢師與內科醫師。這張圖片是一份檢驗報告，可能包含多個時間點、多種檢驗類別（例如生化 Chemistry、CBC、電解質、腎功能、動脈血液氣體分析 ABG 等），同一類別可能有好幾次抽血時間點的數值排成表格。
 
-請完成以下工作：
-1. 找出每個項目「最新一次」的數值。
-2. 依臨床常用順序（CBC → 腎功能 → 肝功能 → 發炎指數 → 其他生化 → 動脈血液氣體分析）輸出，格式參考：
-WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP: 4.0, Arterial blood gas pH 7.25, PCO2 40, HCO3 23
-3. 圖片中沒有出現的項目請直接省略，不要用 0 或 N/A 填充，也不要編造數值。
-4. 【極重要，攸關病人安全，務必仔細檢查、不可遺漏】：依你的臨床判斷，找出所有超出正常參考範圍的「異常」數值（不論輕微或嚴重都要標記，寧可多標記也不要遺漏），並將該項目的「名稱與數值」以兩個星號包住，例如：WBC: **15000**, Hb: **6.5**, Creatinine: **3.2**。正常範圍內的數值不要加星號。
-5. 最後在同一行用括號附上簡短的英文臨床判讀，最多列出 2-3 個最重要的異常發現（例如：(leukocytosis with elevated CRP, suggestive of bacterial infection) 或 (AKI, metabolic acidosis with partial respiratory compensation)）。
-6. 只輸出最終這一行文字本身，不要有任何前言、標題或說明文字，除了步驟4的星號外不要使用其他格式符號。`;
+請完成以下工作，並「完全比照」下方格式範例輸出（用空格對齊，做出類似表格的排版）：
 
-    let labPreviewRaw = '';
+1. 日期換算：報告上的日期若為民國年格式（例如 1150731 代表民國115年07月31日），一律換算成西元「月/日」格式（不含年份、不含前導0），例如 1150731 → 7/31。
+
+2. 建立「Lab:」趨勢表：
+   - 找出 CBC／腎功能／電解質等常一起抽血的時間點（同一組 DATE/TIME 的數據）。
+   - 欄位固定順序為：WBC, Hb, PLT, Neut, BUN, Cr, Na, K（圖片中若沒有出現某一項，該欄位整欄省略，不要編造）。
+   - PLT 數值後方加上小寫 "k"（例如 251 → 251k）。
+   - 只取「最近 3 個」時間點，由舊到新排列（最新一筆放最下面一列）。
+   - 每一列開頭是日期（M/D），欄位之間用空格對齊，讓每一欄的數字盡量對齊。
+   - 若同一次抽血還有其他重要但沒有跟這組時間點對齊的數值（例如 Albumin、Bilirubin 等非每次都抽的項目），只在「最新一列」的最後面加註「項目縮寫:數值」（例如 ALB:2.4），不需要幫這些項目建立完整趨勢欄位。
+
+3. 若圖片中有動脈血液氣體分析（ABG），另外建立一個「ABG」趨勢表，欄位固定順序為：PH, PCO2, PO2, SO2, BE, HCO3，一樣只取「最近 3 個」時間點，格式規則同上。
+
+4. 兩個表格之間空一行；若只有其中一種資料就只輸出該表格。
+
+5. 【極重要，攸關病人安全，務必仔細檢查、不可遺漏】：依你的臨床判斷，將表格中所有超出正常參考範圍的「異常」數值以兩個星號包住（例如 **17320**），正常範圍內的數值不要加星號。
+
+6. 格式範例（僅示範對齊方式與欄位順序，實際欄位與數值請依圖片內容判讀）：
+Lab:    WBC   Hb   PLT   Neut   BUN   Cr    Na    K
+7/20   17320  9.5  251k  83.1  13.7  0.61  138  4.1
+7/29   14630  9.4  343k  94.0  16.3  0.71  135  4.0
+7/31   21390  9.5  296k  88.0  17.8  0.62  138  4.1  ALB:2.4
+
+ABG    PH     PCO2  PO2   SO2   BE    HCO3
+7/29  7.390  60.2  149.3  98.8  8.8   35.6
+7/30  7.397  61.5  107.1  97.7  10.3  37.0
+7/31  7.429  55.5   66.8  93.3  9.9   35.9
+
+7. 只輸出表格本身，不要加上任何前言、標題文字（例如不要輸出「以下是判讀結果」）、程式碼區塊或其他說明文字，除了第5點的星號外不要使用其他格式符號。`;
 
     function escapeHtml(str) {
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    function renderLabPreview() {
-        const wrapEl = document.getElementById('lab-preview-wrap');
-        const previewEl = document.getElementById('lab-preview');
-        if (!labPreviewRaw) {
-            wrapEl.classList.remove('show');
-            previewEl.innerHTML = '';
-            return;
-        }
-        previewEl.innerHTML = escapeHtml(labPreviewRaw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-        wrapEl.classList.add('show');
+    function appendLabResult(rawText) {
+        const box = document.getElementById('lab');
+        const html = escapeHtml(rawText).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+        box.innerHTML = box.innerText.trim() ? box.innerHTML + '\n\n' + html : html;
     }
-
-    window._resetLabPreview = function () {
-        labPreviewRaw = '';
-        renderLabPreview();
-    };
 
     function fileToBase64(file) {
         return new Promise((resolve, reject) => {
@@ -621,13 +718,7 @@ WBC: 12000, Hb: 10, platelet 40K, Creatinine 1.23, AST 45, Bilirubin(T) 1.0, CRP
         try {
             const base64 = await fileToBase64(imageFile);
             const resultText = await callVisionOCR(base64, imageFile.type || 'image/png', OCR_PROMPT);
-            const plainText = resultText.replace(/\*\*/g, ''); // strip highlight markers for the stored plain-text value
-            const labField = document.getElementById('lab');
-            labField.value = labField.value.trim()
-                ? labField.value.trim() + '\n' + plainText
-                : plainText;
-            labPreviewRaw = labPreviewRaw ? labPreviewRaw + '\n' + resultText : resultText;
-            renderLabPreview();
+            appendLabResult(resultText);
             generate();
             statusEl.style.color = '#10b981';
             statusEl.textContent = '✅ 已自動填入 Lab results，請再次確認數值無誤';
@@ -757,10 +848,10 @@ ${note}
 
     function buildAdmissionPlanPrompt() {
         const age = document.getElementById('age').value || '[Age]';
-        const gender = document.getElementById('gender').value || '[Gender]';
+        const gender = getRadioValue('gender') || '[Gender]';
         const cc = document.getElementById('cc').value || '（未填寫）';
         const dx = document.getElementById('dx').value || '（未填寫）';
-        const lab = document.getElementById('lab').value || '（未填寫）';
+        const lab = document.getElementById('lab').innerText.trim() || '（未填寫）';
         const img = document.getElementById('img').value || '（未填寫）';
         const tx = document.getElementById('tx').value || '（未填寫）';
         const now = new Date().toLocaleString('zh-TW');
